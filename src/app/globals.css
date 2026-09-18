@@ -1,0 +1,95 @@
+@import "tailwindcss";
+
+/* The radar is a dark-only surface: a light theme would wash out the altitude
+   colour ramp that carries the meaning here. */
+:root {
+  --background: #020617;
+  --foreground: #f1f5f9;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+/* MapLibre fills its container; without this, a flex parent can leave the
+   canvas at 0×0 and no tiles are ever requested. */
+.maplibregl-map,
+.maplibregl-canvas,
+.maplibregl-canvas-container {
+  width: 100%;
+  height: 100%;
+}
+.maplibregl-ctrl-group {
+  background: #0f172a;
+  border: 1px solid #1e293b;
+}
+
+.maplibregl-ctrl-group button + button {
+  border-top-color: #1e293b;
+}
+
+.maplibregl-ctrl-group button .maplibregl-ctrl-icon {
+  filter: invert(1);
+}
+
+.maplibregl-ctrl-attrib {
+  background: rgba(2, 6, 23, 0.75) !important;
+}
+
+.maplibregl-ctrl-attrib a {
+  color: #94a3b8 !important;
+}
+
+/* DOM aircraft markers sit above the canvas so they stay visible even if a
+   MapLibre symbol layer fails to register. */
+.ac-marker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.ac-plane {
+  display: block;
+  color: #38bdf8;
+  filter: drop-shadow(0 0 2px #020617) drop-shadow(0 1px 2px rgb(0 0 0 / 0.7));
+  transform-origin: 50% 50%;
+  transition: transform 0.7s linear;
+}
+
+.ac-marker.is-selected .ac-plane {
+  filter: drop-shadow(0 0 6px currentColor) drop-shadow(0 0 1px #f8fafc);
+}
+
+.ac-marker.is-ground {
+  opacity: 0.62;
+}
+
+.ac-callsign {
+  font: 600 10px/1 var(--font-geist-mono), ui-monospace, monospace;
+  letter-spacing: 0.04em;
+  color: #0f172a;
+  text-shadow:
+    0 0 4px #f8fafc,
+    0 1px 2px #f8fafc;
+  white-space: nowrap;
+}
+
+.ac-marker.is-selected .ac-callsign {
+  color: #0f172a;
+  font-weight: 700;
+}
