@@ -16,6 +16,16 @@ export interface FlightsPayload {
 
 const POLL_MS = 15_000;
 
+function friendlyFlightError(detail: string, status: number): string {
+  if (status === 429 || /429/.test(detail)) {
+    return "OpenSky rate-limited the live server. Traffic should return after the anonymous daily budget resets.";
+  }
+  if (status === 502 || status === 504 || /timed out|aborted|timeout/i.test(detail)) {
+    return "OpenSky did not answer the live server in time. The map will retry automatically — or tap Retry.";
+  }
+  return detail;
+}
+
 export function useFlights() {
   const [data, setData] = useState<FlightsPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -31,9 +41,22 @@ export function useFlights() {
 
     try {
       const res = await fetch("/api/flights", { signal: controller.signal });
-      if (!res.ok) throw new Error(`Request failed (${res.status})`);
+      const payload = (await res.json().catch(() => null)) as
+        | (FlightsPayload & { error?: string })
+        | null;
 
-      const payload = (await res.json()) as FlightsPayload;
+      if (!res.ok) {
+        const detail =
+          payload && typeof payload.error === "string"
+            ? payload.error
+            : `Request failed (${res.status})`;
+        throw new Error(friendlyFlightError(detail, res.status));
+      }
+
+      if (!payload || !Array.isArray(payload.flights)) {
+        throw new Error("Live traffic response was invalid.");
+      }
+
       setData(payload);
       setUpdatedAt(Date.now());
       setError(null);

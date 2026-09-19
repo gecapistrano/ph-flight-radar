@@ -91,6 +91,18 @@ function toFlight(state: StateVector): Flight | null {
   };
 }
 
+const OPEN_SKY_TIMEOUT_MS = 12_000;
+
+function isAbortError(error: unknown): boolean {
+  return (
+    (error instanceof DOMException && error.name === "AbortError") ||
+    (error instanceof Error &&
+      (error.name === "TimeoutError" ||
+        error.name === "AbortError" ||
+        /aborted due to timeout/i.test(error.message)))
+  );
+}
+
 async function fetchOpenSky(url: string, signal?: AbortSignal): Promise<Response> {
   let lastError: unknown;
 
@@ -101,7 +113,7 @@ async function fetchOpenSky(url: string, signal?: AbortSignal): Promise<Response
           Accept: "application/json",
           "User-Agent": "ph-flight-radar/1.0 (+https://github.com/gecapistrano/ph-flight-radar)",
         },
-        signal: signal ?? AbortSignal.timeout(8_000),
+        signal: signal ?? AbortSignal.timeout(OPEN_SKY_TIMEOUT_MS),
         cache: "no-store",
       });
       if (res.status === 429 && attempt < 1) {
@@ -111,10 +123,14 @@ async function fetchOpenSky(url: string, signal?: AbortSignal): Promise<Response
       return res;
     } catch (error) {
       lastError = error;
-      if (attempt < 1) {
-        await new Promise((resolve) => setTimeout(resolve, 400));
-      }
+      // A timeout already burned 12s. Retrying would exceed maxDuration 20.
+      if (isAbortError(error) || attempt >= 1) break;
+      await new Promise((resolve) => setTimeout(resolve, 400));
     }
+  }
+
+  if (isAbortError(lastError)) {
+    throw new Error("OpenSky timed out after 12s");
   }
 
   throw lastError instanceof Error ? lastError : new Error("OpenSky request failed");

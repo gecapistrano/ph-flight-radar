@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { fetchFlights } from "@/lib/opensky";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 15;
+export const maxDuration = 20;
 
 /**
  * Server-side proxy for the OpenSky state-vector API.
@@ -84,7 +84,11 @@ export async function GET() {
       });
     }
 
-    const message = error instanceof Error ? error.message : "Unknown error";
+    const raw = error instanceof Error ? error.message : "Unknown error";
+    const message = /timed out|aborted/i.test(raw)
+      ? "OpenSky timed out. The live feed is slow or rate-limiting this server."
+      : raw;
+    console.error("[api/flights]", message);
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }
