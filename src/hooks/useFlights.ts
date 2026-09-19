@@ -18,7 +18,7 @@ const POLL_MS = 15_000;
 
 function friendlyFlightError(detail: string, status: number): string {
   if (status === 429 || /429/.test(detail)) {
-    return "OpenSky rate-limited the live server. Traffic should return after the anonymous daily budget resets.";
+    return "Live traffic rate-limited the server. The map will retry after the anonymous budget resets.";
   }
   if (
     status === 502 ||

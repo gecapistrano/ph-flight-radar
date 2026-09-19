@@ -114,7 +114,7 @@ export default function RadarApp() {
           <div className="min-h-0 flex-1 overflow-y-auto">
             {loading && !data ? (
               <p className="px-4 py-8 text-center text-sm text-slate-500">
-                Contacting OpenSky…
+                Contacting live traffic…
               </p>
             ) : error && !data ? (
               <div className="px-4 py-8 text-center">

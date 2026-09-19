@@ -91,10 +91,14 @@ function toFlight(state: StateVector): Flight | null {
   };
 }
 
-const OPEN_SKY_TIMEOUT_MS = 5_000;
-const ADSB_TIMEOUT_MS = 10_000;
+const OPEN_SKY_TIMEOUT_MS = 4_000;
+const ADSB_TIMEOUT_MS = 8_000;
+const OPEN_SKY_COOLDOWN_MS = 45_000;
 const USER_AGENT =
   "ph-flight-radar/1.0 (+https://github.com/gecapistrano/ph-flight-radar)";
+
+/** Skip OpenSky after a 429 or timeout so later visitors are not queued behind a dead hop. */
+let openSkySkipUntil = 0;
 
 function isAbortError(error: unknown): boolean {
   return (
@@ -137,7 +141,15 @@ async function fetchUpstream(
   }
 }
 
+function markOpenSkyUnavailable() {
+  openSkySkipUntil = Date.now() + OPEN_SKY_COOLDOWN_MS;
+}
+
 async function fetchFromOpenSky(signal?: AbortSignal): Promise<FlightSnapshot> {
+  if (Date.now() < openSkySkipUntil) {
+    throw new Error("OpenSky skipped after recent rate-limit or timeout");
+  }
+
   const params = new URLSearchParams({
     lamin: String(PH_BOUNDS.lamin),
     lomin: String(PH_BOUNDS.lomin),
@@ -145,23 +157,38 @@ async function fetchFromOpenSky(signal?: AbortSignal): Promise<FlightSnapshot> {
     lomax: String(PH_BOUNDS.lomax),
   });
 
-  const res = await fetchUpstream(
-    `https://opensky-network.org/api/states/all?${params}`,
-    OPEN_SKY_TIMEOUT_MS,
-    signal
-  );
+  try {
+    const res = await fetchUpstream(
+      `https://opensky-network.org/api/states/all?${params}`,
+      OPEN_SKY_TIMEOUT_MS,
+      signal
+    );
 
-  if (!res.ok) {
-    throw new Error(`OpenSky responded ${res.status}`);
+    if (res.status === 429) {
+      markOpenSkyUnavailable();
+      throw new Error("OpenSky responded 429");
+    }
+
+    if (!res.ok) {
+      throw new Error(`OpenSky responded ${res.status}`);
+    }
+
+    const body = (await res.json()) as { time: number; states: StateVector[] | null };
+
+    const flights = (body.states ?? [])
+      .map(toFlight)
+      .filter((f): f is Flight => f !== null);
+
+    return { time: body.time, flights };
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      /timed out|429|connection failed/i.test(error.message)
+    ) {
+      markOpenSkyUnavailable();
+    }
+    throw error;
   }
-
-  const body = (await res.json()) as { time: number; states: StateVector[] | null };
-
-  const flights = (body.states ?? [])
-    .map(toFlight)
-    .filter((f): f is Flight => f !== null);
-
-  return { time: body.time, flights };
 }
 
 interface AdsbAircraft {
@@ -235,6 +262,10 @@ async function fetchFromAdsbLol(signal?: AbortSignal): Promise<FlightSnapshot> {
     signal
   );
 
+  if (res.status === 429) {
+    throw new Error("adsb.lol responded 429");
+  }
+
   if (!res.ok) {
     throw new Error(`adsb.lol responded ${res.status}`);
   }
@@ -251,30 +282,49 @@ async function fetchFromAdsbLol(signal?: AbortSignal): Promise<FlightSnapshot> {
         f.longitude <= PH_BOUNDS.lomax
     );
 
+  const now = typeof body.now === "number" ? body.now : Date.now() / 1000;
   return {
-    time: typeof body.now === "number" ? Math.floor(body.now) : Math.floor(Date.now() / 1000),
+    // adsb.lol reports milliseconds; OpenSky reports seconds.
+    time: Math.floor(now > 1e12 ? now / 1000 : now),
     flights,
   };
 }
 
+type SourceFetcher = (signal?: AbortSignal) => Promise<FlightSnapshot>;
+
 export async function fetchFlights(signal?: AbortSignal): Promise<FlightSnapshot> {
-  try {
-    return await fetchFromOpenSky(signal);
-  } catch (openSkyError) {
-    // OpenSky documents that it may block AWS/hyperscaler IPs. Vercel runs there,
-    // so production often hangs or fails; adsb.lol is the public fallback.
-    console.warn(
-      "[flights] OpenSky unavailable, using adsb.lol:",
-      openSkyError instanceof Error ? openSkyError.message : openSkyError
-    );
+  // OpenSky often refuses AWS/hyperscaler IPs. Vercel runs there, so production
+  // should not wait on OpenSky before trying the public adsb.lol feed.
+  const onVercel = process.env.VERCEL === "1";
+  const order: [string, SourceFetcher][] = onVercel
+    ? [
+        ["adsb.lol", fetchFromAdsbLol],
+        ["OpenSky", fetchFromOpenSky],
+      ]
+    : [
+        ["OpenSky", fetchFromOpenSky],
+        ["adsb.lol", fetchFromAdsbLol],
+      ];
+
+  let lastError: unknown;
+  for (let i = 0; i < order.length; i++) {
+    const [name, fetchSource] = order[i];
     try {
-      return await fetchFromAdsbLol(signal);
-    } catch {
-      throw openSkyError instanceof Error
-        ? openSkyError
-        : new Error("Live traffic sources failed");
+      return await fetchSource(signal);
+    } catch (error) {
+      lastError = error;
+      if (i < order.length - 1) {
+        console.warn(
+          `[flights] ${name} unavailable, trying fallback:`,
+          error instanceof Error ? error.message : error
+        );
+      }
     }
   }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Live traffic sources failed");
 }
 
 /* ── Unit conversions ──────────────────────────────────────────────────────
