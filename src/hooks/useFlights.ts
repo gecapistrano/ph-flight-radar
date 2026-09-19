@@ -20,7 +20,11 @@ function friendlyFlightError(detail: string, status: number): string {
   if (status === 429 || /429/.test(detail)) {
     return "OpenSky rate-limited the live server. Traffic should return after the anonymous daily budget resets.";
   }
-  if (status === 502 || status === 504 || /timed out|aborted|timeout/i.test(detail)) {
+  if (
+    status === 502 ||
+    status === 504 ||
+    /timed out|aborted|timeout|fetch failed|connection failed|unreachable/i.test(detail)
+  ) {
     return "OpenSky did not answer the live server in time. The map will retry automatically — or tap Retry.";
   }
   return detail;

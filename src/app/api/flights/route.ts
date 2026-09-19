@@ -1,6 +1,11 @@
+import { setDefaultResultOrder } from "node:dns";
 import { NextResponse } from "next/server";
 
 import { fetchFlights } from "@/lib/opensky";
+
+// Vercel often resolves OpenSky to IPv6 first; those connections hang, then
+// the function dies with FUNCTION_INVOCATION_TIMEOUT. Prefer IPv4.
+setDefaultResultOrder("ipv4first");
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 20;
@@ -85,8 +90,8 @@ export async function GET() {
     }
 
     const raw = error instanceof Error ? error.message : "Unknown error";
-    const message = /timed out|aborted/i.test(raw)
-      ? "OpenSky timed out. The live feed is slow or rate-limiting this server."
+    const message = /timed out|aborted|fetch failed|connection failed/i.test(raw)
+      ? "OpenSky timed out. The live feed is slow or unreachable from this server."
       : raw;
     console.error("[api/flights]", message);
     return NextResponse.json({ error: message }, { status: 502 });

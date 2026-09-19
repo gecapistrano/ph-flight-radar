@@ -104,36 +104,32 @@ function isAbortError(error: unknown): boolean {
 }
 
 async function fetchOpenSky(url: string, signal?: AbortSignal): Promise<Response> {
-  let lastError: unknown;
+  const timeout = AbortSignal.timeout(OPEN_SKY_TIMEOUT_MS);
+  const combined =
+    signal && typeof AbortSignal.any === "function"
+      ? AbortSignal.any([signal, timeout])
+      : timeout;
 
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const res = await fetch(url, {
-        headers: {
-          Accept: "application/json",
-          "User-Agent": "ph-flight-radar/1.0 (+https://github.com/gecapistrano/ph-flight-radar)",
-        },
-        signal: signal ?? AbortSignal.timeout(OPEN_SKY_TIMEOUT_MS),
-        cache: "no-store",
-      });
-      if (res.status === 429 && attempt < 1) {
-        await new Promise((resolve) => setTimeout(resolve, 400));
-        continue;
-      }
-      return res;
-    } catch (error) {
-      lastError = error;
-      // A timeout already burned 12s. Retrying would exceed maxDuration 20.
-      if (isAbortError(error) || attempt >= 1) break;
-      await new Promise((resolve) => setTimeout(resolve, 400));
+  try {
+    return await fetch(url, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "ph-flight-radar/1.0 (+https://github.com/gecapistrano/ph-flight-radar)",
+      },
+      signal: combined,
+      cache: "no-store",
+    });
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw new Error("OpenSky timed out after 12s");
     }
+    const detail = error instanceof Error ? error.message : "OpenSky request failed";
+    throw new Error(
+      detail === "fetch failed"
+        ? "OpenSky connection failed from the live server"
+        : detail
+    );
   }
-
-  if (isAbortError(lastError)) {
-    throw new Error("OpenSky timed out after 12s");
-  }
-
-  throw lastError instanceof Error ? lastError : new Error("OpenSky request failed");
 }
 
 export async function fetchFlights(signal?: AbortSignal): Promise<FlightSnapshot> {
