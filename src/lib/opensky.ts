@@ -91,7 +91,10 @@ function toFlight(state: StateVector): Flight | null {
   };
 }
 
-const OPEN_SKY_TIMEOUT_MS = 12_000;
+const OPEN_SKY_TIMEOUT_MS = 5_000;
+const ADSB_TIMEOUT_MS = 10_000;
+const USER_AGENT =
+  "ph-flight-radar/1.0 (+https://github.com/gecapistrano/ph-flight-radar)";
 
 function isAbortError(error: unknown): boolean {
   return (
@@ -103,8 +106,12 @@ function isAbortError(error: unknown): boolean {
   );
 }
 
-async function fetchOpenSky(url: string, signal?: AbortSignal): Promise<Response> {
-  const timeout = AbortSignal.timeout(OPEN_SKY_TIMEOUT_MS);
+async function fetchUpstream(
+  url: string,
+  timeoutMs: number,
+  signal?: AbortSignal
+): Promise<Response> {
+  const timeout = AbortSignal.timeout(timeoutMs);
   const combined =
     signal && typeof AbortSignal.any === "function"
       ? AbortSignal.any([signal, timeout])
@@ -114,25 +121,23 @@ async function fetchOpenSky(url: string, signal?: AbortSignal): Promise<Response
     return await fetch(url, {
       headers: {
         Accept: "application/json",
-        "User-Agent": "ph-flight-radar/1.0 (+https://github.com/gecapistrano/ph-flight-radar)",
+        "User-Agent": USER_AGENT,
       },
       signal: combined,
       cache: "no-store",
     });
   } catch (error) {
     if (isAbortError(error)) {
-      throw new Error("OpenSky timed out after 12s");
+      throw new Error(`Upstream timed out after ${timeoutMs / 1000}s`);
     }
-    const detail = error instanceof Error ? error.message : "OpenSky request failed";
+    const detail = error instanceof Error ? error.message : "Upstream request failed";
     throw new Error(
-      detail === "fetch failed"
-        ? "OpenSky connection failed from the live server"
-        : detail
+      detail === "fetch failed" ? "Upstream connection failed from the live server" : detail
     );
   }
 }
 
-export async function fetchFlights(signal?: AbortSignal): Promise<FlightSnapshot> {
+async function fetchFromOpenSky(signal?: AbortSignal): Promise<FlightSnapshot> {
   const params = new URLSearchParams({
     lamin: String(PH_BOUNDS.lamin),
     lomin: String(PH_BOUNDS.lomin),
@@ -140,13 +145,13 @@ export async function fetchFlights(signal?: AbortSignal): Promise<FlightSnapshot
     lomax: String(PH_BOUNDS.lomax),
   });
 
-  const res = await fetchOpenSky(
+  const res = await fetchUpstream(
     `https://opensky-network.org/api/states/all?${params}`,
+    OPEN_SKY_TIMEOUT_MS,
     signal
   );
 
   if (!res.ok) {
-    // 429 is the common one: the anonymous tier has a daily credit budget.
     throw new Error(`OpenSky responded ${res.status}`);
   }
 
@@ -157,6 +162,119 @@ export async function fetchFlights(signal?: AbortSignal): Promise<FlightSnapshot
     .filter((f): f is Flight => f !== null);
 
   return { time: body.time, flights };
+}
+
+interface AdsbAircraft {
+  hex?: string;
+  flight?: string;
+  lat?: number;
+  lon?: number;
+  alt_baro?: number | "ground";
+  gs?: number;
+  track?: number;
+  baro_rate?: number;
+  geom_rate?: number;
+  seen_pos?: number;
+  seen?: number;
+}
+
+function feetToMetres(ft: number) {
+  return ft / 3.280839895;
+}
+
+function knotsToMps(kt: number) {
+  return kt / 1.943844492;
+}
+
+function fpmToMps(fpm: number) {
+  return fpm * 0.00508;
+}
+
+function toAdsbFlight(ac: AdsbAircraft): Flight | null {
+  const longitude = num(ac.lon);
+  const latitude = num(ac.lat);
+  if (longitude === null || latitude === null) return null;
+
+  const hex = typeof ac.hex === "string" ? ac.hex.toLowerCase() : "";
+  if (!hex) return null;
+
+  const onGround = ac.alt_baro === "ground";
+  const altitude =
+    typeof ac.alt_baro === "number" && Number.isFinite(ac.alt_baro)
+      ? feetToMetres(ac.alt_baro)
+      : null;
+  const rawCallsign = typeof ac.flight === "string" ? ac.flight.trim() : "";
+  const seen = num(ac.seen_pos) ?? num(ac.seen) ?? 0;
+
+  return {
+    icao24: hex,
+    callsign: rawCallsign.length > 0 ? rawCallsign : null,
+    originCountry: "Unknown",
+    longitude,
+    latitude,
+    altitude: onGround ? 0 : altitude,
+    velocity: num(ac.gs) !== null ? knotsToMps(ac.gs as number) : null,
+    heading: num(ac.track),
+    verticalRate:
+      num(ac.baro_rate) !== null
+        ? fpmToMps(ac.baro_rate as number)
+        : num(ac.geom_rate) !== null
+          ? fpmToMps(ac.geom_rate as number)
+          : null,
+    onGround,
+    lastContact: Math.floor(Date.now() / 1000 - seen),
+  };
+}
+
+async function fetchFromAdsbLol(signal?: AbortSignal): Promise<FlightSnapshot> {
+  const lat = (PH_BOUNDS.lamin + PH_BOUNDS.lamax) / 2;
+  const lon = (PH_BOUNDS.lomin + PH_BOUNDS.lomax) / 2;
+  const res = await fetchUpstream(
+    `https://api.adsb.lol/v2/lat/${lat}/lon/${lon}/dist/650`,
+    ADSB_TIMEOUT_MS,
+    signal
+  );
+
+  if (!res.ok) {
+    throw new Error(`adsb.lol responded ${res.status}`);
+  }
+
+  const body = (await res.json()) as { ac?: AdsbAircraft[] | null; now?: number };
+  const flights = (body.ac ?? [])
+    .map(toAdsbFlight)
+    .filter((f): f is Flight => f !== null)
+    .filter(
+      (f) =>
+        f.latitude >= PH_BOUNDS.lamin &&
+        f.latitude <= PH_BOUNDS.lamax &&
+        f.longitude >= PH_BOUNDS.lomin &&
+        f.longitude <= PH_BOUNDS.lomax
+    );
+
+  return {
+    time: typeof body.now === "number" ? Math.floor(body.now) : Math.floor(Date.now() / 1000),
+    flights,
+  };
+}
+
+export async function fetchFlights(signal?: AbortSignal): Promise<FlightSnapshot> {
+  try {
+    return await fetchFromOpenSky(signal);
+  } catch (openSkyError) {
+    // OpenSky documents that it may block AWS/hyperscaler IPs. Vercel runs there,
+    // so production often hangs or fails; adsb.lol is the public fallback.
+    console.warn(
+      "[flights] OpenSky unavailable, using adsb.lol:",
+      openSkyError instanceof Error ? openSkyError.message : openSkyError
+    );
+    try {
+      return await fetchFromAdsbLol(signal);
+    } catch {
+      throw openSkyError instanceof Error
+        ? openSkyError
+        : new Error("Live traffic sources failed");
+    }
+  }
 }
 
 /* ── Unit conversions ──────────────────────────────────────────────────────

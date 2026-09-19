@@ -25,7 +25,7 @@ function friendlyFlightError(detail: string, status: number): string {
     status === 504 ||
     /timed out|aborted|timeout|fetch failed|connection failed|unreachable/i.test(detail)
   ) {
-    return "OpenSky did not answer the live server in time. The map will retry automatically — or tap Retry.";
+    return "Live traffic did not answer the server in time. The map will retry automatically — or tap Retry.";
   }
   return detail;
 }

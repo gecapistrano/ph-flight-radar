@@ -64,7 +64,7 @@ export default function RadarApp() {
             </span>
           </div>
           <p className="mt-1 text-[11px] text-slate-500">
-            Live ADS-B traffic · OpenSky Network
+            Live ADS-B traffic over the Philippine FIR
           </p>
         </div>
 
@@ -186,7 +186,7 @@ export default function RadarApp() {
 
           <div className="shrink-0 border-t border-slate-800 px-4 py-2 text-[10px] text-slate-600">
             {data
-              ? "Live OpenSky feed · refreshes every 15s while this tab is open"
+              ? "Live ADS-B feed · refreshes every 15s while this tab is open"
               : "—"}
             {error && data && (
               <span className="text-amber-500"> · showing last good data</span>

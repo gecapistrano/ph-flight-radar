@@ -90,8 +90,8 @@ export async function GET() {
     }
 
     const raw = error instanceof Error ? error.message : "Unknown error";
-    const message = /timed out|aborted|fetch failed|connection failed/i.test(raw)
-      ? "OpenSky timed out. The live feed is slow or unreachable from this server."
+    const message = /timed out|aborted|fetch failed|connection failed|upstream/i.test(raw)
+      ? "Live traffic timed out. The feed is slow or unreachable from this server."
       : raw;
     console.error("[api/flights]", message);
     return NextResponse.json({ error: message }, { status: 502 });
