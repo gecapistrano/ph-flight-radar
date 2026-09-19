@@ -94,25 +94,25 @@ function toFlight(state: StateVector): Flight | null {
 async function fetchOpenSky(url: string, signal?: AbortSignal): Promise<Response> {
   let lastError: unknown;
 
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await fetch(url, {
         headers: {
           Accept: "application/json",
           "User-Agent": "ph-flight-radar/1.0 (+https://github.com/gecapistrano/ph-flight-radar)",
         },
-        signal: signal ?? AbortSignal.timeout(20_000),
+        signal: signal ?? AbortSignal.timeout(8_000),
         cache: "no-store",
       });
-      if (res.status === 429 && attempt < 2) {
-        await new Promise((resolve) => setTimeout(resolve, 1200 * (attempt + 1)));
+      if (res.status === 429 && attempt < 1) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
         continue;
       }
       return res;
     } catch (error) {
       lastError = error;
-      if (attempt < 2) {
-        await new Promise((resolve) => setTimeout(resolve, 800 * (attempt + 1)));
+      if (attempt < 1) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
       }
     }
   }

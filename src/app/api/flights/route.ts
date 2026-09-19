@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { fetchFlights } from "@/lib/opensky";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+export const maxDuration = 15;
 
 /**
  * Server-side proxy for the OpenSky state-vector API.
