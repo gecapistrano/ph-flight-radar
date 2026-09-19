@@ -91,6 +91,35 @@ function toFlight(state: StateVector): Flight | null {
   };
 }
 
+async function fetchOpenSky(url: string, signal?: AbortSignal): Promise<Response> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "ph-flight-radar/1.0 (+https://github.com/gecapistrano/ph-flight-radar)",
+        },
+        signal: signal ?? AbortSignal.timeout(20_000),
+        cache: "no-store",
+      });
+      if (res.status === 429 && attempt < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 1200 * (attempt + 1)));
+        continue;
+      }
+      return res;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 800 * (attempt + 1)));
+      }
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("OpenSky request failed");
+}
+
 export async function fetchFlights(signal?: AbortSignal): Promise<FlightSnapshot> {
   const params = new URLSearchParams({
     lamin: String(PH_BOUNDS.lamin),
@@ -99,13 +128,10 @@ export async function fetchFlights(signal?: AbortSignal): Promise<FlightSnapshot
     lomax: String(PH_BOUNDS.lomax),
   });
 
-  const res = await fetch(`https://opensky-network.org/api/states/all?${params}`, {
-    headers: {
-      "User-Agent": "ph-flight-radar (github.com/gecapistrano/ph-flight-radar)",
-    },
-    signal,
-    cache: "no-store",
-  });
+  const res = await fetchOpenSky(
+    `https://opensky-network.org/api/states/all?${params}`,
+    signal
+  );
 
   if (!res.ok) {
     // 429 is the common one: the anonymous tier has a daily credit budget.

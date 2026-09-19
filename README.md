@@ -7,7 +7,7 @@ API; the browser never talks to OpenSky directly.
 Aircraft are coloured by altitude, rotated to their track, and listed beside
 the map so you can search a callsign and jump to it.
 
-**Live demo:** once deployed, the production URL is the GitHub repo homepage.
+**Live demo:** [ph-flight-radar.vercel.app](https://ph-flight-radar.vercel.app)
 
 ---
 
